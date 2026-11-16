@@ -180,14 +180,16 @@
   ];
   const IGNORE_TAGS = ['SCRIPT', 'STYLE', 'IMG', 'CANVAS', 'VIDEO', 'AUDIO',
     'INPUT', 'BUTTON', 'SELECT', 'OPTION', 'TEXTAREA', 'META', 'LINK', 'BR', 'HR'];
+  const LIST_TAGS = ['OL', 'UL'];
   const TEXT_TAGS = ['P', 'DIV', 'SPAN', 'LI', 'ARTICLE', 'SECTION',
-    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'FIGCAPTION', 'TD', 'TH', 'LABEL'];
+    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'FIGCAPTION',
+    'TD', 'TH', 'LABEL', ...LIST_TAGS];
   const TEXT_CLASSES = ['message', 'chat', 'content', 'text', 'prose',
     'markdown', 'paragraph', 'bubble', 'response'];
   const PRIORITY_SELECTORS = [
     '.message, .chat-message, [class*="message-"], [class*="chat-"]',
     '.prose, .markdown, [class*="content"], [class*="text"]',
-    'p, h1, h2, h3, h4, h5, h6, li, blockquote',
+    'p, h1, h2, h3, h4, h5, h6, li, blockquote, ol, ul',
   ];
   const MARKED_SELECTOR = '[class*="rtl-assistant-"], [data-rtl-processed], [data-rtl-numbers]';
 
@@ -493,7 +495,11 @@
           ancestor = ancestor.parentElement;
         }
       });
-      const leaves = candidates.filter(el => !ancestorsOfCandidates.has(el));
+      // Lists keep their direction too: markers/bullets align with the
+      // list's direction, so an OL/UL must not be dropped just because its
+      // <li> children are also candidates.
+      const leaves = candidates.filter(el =>
+        !ancestorsOfCandidates.has(el) || LIST_TAGS.includes(el.tagName.toUpperCase()));
 
       // Phase 1: all style/layout reads. Phase 2: all DOM writes. Keeping
       // them apart avoids forced synchronous reflow on every element.
