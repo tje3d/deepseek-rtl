@@ -88,4 +88,14 @@ t('OL list gets RTL direction for its Persian items', () => {
   assert.equal(ol.classList.contains('rtl-assistant-persian'), true, 'OL gets RTL class')
 })
 
+t('OL gets RTL even when pushed out by the 500-element cap', () => {
+  // DeepSeek pages have thousands of text nodes; an early <ol> is dropped
+  // by slice(-500) before it ever reaches the scorer.
+  const filler = Array.from({ length: 600 }, (_, i) => `<p>پاراگراف شماره ${i}</p>`).join('')
+  const dom = boot(`<main><ol class="message"><li>سلام دنیا</li></ol>${filler}</main>`)
+  dom.window.__api.scanImportantElements()
+  const ol = dom.window.document.querySelector('ol')
+  assert.equal(ol.classList.contains('rtl-assistant-persian'), true, 'OL survives cap')
+})
+
 console.log('all DOM tests passed')

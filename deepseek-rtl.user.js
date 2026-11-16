@@ -482,7 +482,11 @@
         elements = elements.concat(Array.from(document.querySelectorAll(selector)));
       });
 
-      const candidates = [...new Set(elements)].slice(-500);
+      // Lists are structural containers: their markers align with the list's
+      // own direction, so every OL/UL must be processed regardless of the
+      // recency cap that drops older elements on long chat pages.
+      const allLists = Array.from(document.querySelectorAll('ol, ul'));
+      const candidates = [...new Set([...elements.slice(-500), ...allLists])];
 
       // Nested selectors (e.g. .message and its <p>) would make the parent
       // unwrap spans the child just wrapped. Keep only leaf-most candidates:
