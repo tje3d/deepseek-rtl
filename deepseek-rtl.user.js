@@ -163,6 +163,34 @@
 
   const PREFIX_SYMBOLS = /[\u2705\u2714\u2713\u2611\u2610\u2605\u2606\u272A\u2730\u273F\u2747\u274C\u274E\u2753-\u2755\u2757\u2763\u2764\u2795-\u2797\u27A1\u27B0\u27BF\u2934\u2935\u2B05-\u2B07\u2B1B\u2B1C\u2B50\u2B55\u3030\u303D\u3297\u3299]|[\uD83C][\uDF00-\uDFFF]|[\uD83D][\uDC00-\uDE4F]|[\uD83D][\uDE80-\uDEFF]|[\uD83E][\uDD00-\uDDFF]/u;
 
+  // Built once — the previous version rebuilt this RegExp per text node.
+  const COMBINED_SPLIT_REGEX = new RegExp(`(\\d+|${EMOJI_AND_SYMBOLS.source})`, 'gu');
+
+  const WRAPPED_SPAN_CLASSES = [
+    'rtl-assistant-ltr-number',
+    'rtl-assistant-ltr-symbol',
+    'rtl-assistant-prefix-symbol',
+  ];
+  const WRAPPED_SPAN_SELECTOR = WRAPPED_SPAN_CLASSES.map(c => '.' + c).join(', ');
+  const RTL_CLASSES = [
+    'rtl-assistant-persian',
+    'rtl-assistant-english',
+    ...WRAPPED_SPAN_CLASSES,
+    'rtl-assistant-textarea',
+  ];
+  const IGNORE_TAGS = ['SCRIPT', 'STYLE', 'IMG', 'CANVAS', 'VIDEO', 'AUDIO',
+    'INPUT', 'BUTTON', 'SELECT', 'OPTION', 'TEXTAREA', 'META', 'LINK', 'BR', 'HR'];
+  const TEXT_TAGS = ['P', 'DIV', 'SPAN', 'LI', 'ARTICLE', 'SECTION',
+    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'FIGCAPTION', 'TD', 'TH', 'LABEL'];
+  const TEXT_CLASSES = ['message', 'chat', 'content', 'text', 'prose',
+    'markdown', 'paragraph', 'bubble', 'response'];
+  const PRIORITY_SELECTORS = [
+    '.message, .chat-message, [class*="message-"], [class*="chat-"]',
+    '.prose, .markdown, [class*="content"], [class*="text"]',
+    'p, h1, h2, h3, h4, h5, h6, li, blockquote',
+  ];
+  const MARKED_SELECTOR = '[class*="rtl-assistant-"], [data-rtl-processed], [data-rtl-numbers]';
+
   const analyzeText = (text) => {
     const cleanText = text.trim();
     if (cleanText.length < 2) return null;
@@ -208,6 +236,22 @@
     };
   };
 
+  // Pure: text stats -> which direction class to apply (or null for none).
+  const decideAction = (stats) => {
+    if (!stats) return null;
+
+    if (stats.hasRTL && (stats.rtlRatio > 0.2 || stats.wordCount < 5)) {
+      return 'persian';
+    }
+    if (stats.hasEnglish && !stats.hasRTL) {
+      return stats.wordCount <= 3 && stats.totalChars < 20 ? 'persian' : 'english';
+    }
+    if (stats.hasRTL && stats.rtlRatio <= 0.2) {
+      return 'english';
+    }
+    return null;
+  };
+
   /* =========================
      ELEMENT FILTERING
   ========================= */
@@ -242,10 +286,7 @@
 
     if (isSVGorRelated(el)) return false;
 
-    const ignoreTags = ['SCRIPT', 'STYLE', 'IMG', 'CANVAS', 'VIDEO', 'AUDIO',
-                       'INPUT', 'BUTTON', 'SELECT', 'OPTION', 'TEXTAREA',
-                       'META', 'LINK', 'BR', 'HR'];
-    if (ignoreTags.includes(el.tagName.toUpperCase())) return false;
+    if (IGNORE_TAGS.includes(el.tagName.toUpperCase())) return false;
 
     // RTL FIX: skip anything inside code blocks / inline code / syntax highlight
     if (el.closest(CODE_BLOCK_SELECTOR)) {
@@ -265,19 +306,14 @@
       return false;
     }
 
-    const textTags = ['P', 'DIV', 'SPAN', 'LI', 'ARTICLE', 'SECTION',
-                     'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-                     'BLOCKQUOTE', 'FIGCAPTION', 'TD', 'TH', 'LABEL'];
-
-    if (textTags.includes(el.tagName.toUpperCase())) {
+    if (TEXT_TAGS.includes(el.tagName.toUpperCase())) {
       return true;
     }
 
     const className = el.className || '';
     if (typeof className === 'string') {
-      const textClasses = ['message', 'chat', 'content', 'text', 'prose',
-                          'markdown', 'paragraph', 'bubble', 'response'];
-      return textClasses.some(c => className.toLowerCase().includes(c.toLowerCase()));
+      const lower = className.toLowerCase();
+      return TEXT_CLASSES.some(c => lower.includes(c));
     }
 
     return false;
@@ -287,11 +323,32 @@
      DIRECTION APPLICATION - FIXED
   ========================= */
 
+  const unwrapWrappedSpans = (root) => {
+    root.querySelectorAll(WRAPPED_SPAN_SELECTOR).forEach(span => {
+      const parent = span.parentNode;
+      if (parent) {
+        parent.replaceChild(document.createTextNode(span.textContent), span);
+      }
+    });
+  };
+
+  // One pass restores plain text and clears every marker this script adds.
+  const stripMarks = () => {
+    unwrapWrappedSpans(document);
+    document.querySelectorAll(MARKED_SELECTOR).forEach(el => {
+      el.classList.remove(...RTL_CLASSES);
+      delete el.dataset.rtlProcessed;
+      delete el.dataset.rtlNumbers;
+    });
+  };
+
   const processNumbersAndSymbolsSafely = (element) => {
     if (!element || !element.childNodes) return;
 
-    if (element.dataset.rtlNumbers === '1') return;
-    element.dataset.rtlNumbers = '1';
+    // Reset on every pass: applyDirectionSafely unwraps spans first, so they
+    // must be re-wrapped here. A stale flag used to skip re-wrapping and left
+    // numbers/emoji unstyled after a force scan.
+    delete element.dataset.rtlNumbers;
 
     const walker = document.createTreeWalker(
       element,
@@ -321,9 +378,7 @@
       const node = nodes[i];
       const text = node.textContent;
 
-      const combinedRegex = new RegExp(`(\\d+|${EMOJI_AND_SYMBOLS.source})`, 'gu');
-
-      const parts = text.split(combinedRegex);
+      const parts = text.split(COMBINED_SPLIT_REGEX);
 
       if (parts.length <= 1) continue;
 
@@ -360,72 +415,42 @@
     }
   };
 
-  const applyDirectionSafely = (el, force = false) => {
-    if (!el || !el.isConnected) return;
+  // Read-only phase: gather everything that needs a layout/style read.
+  const planDirection = (el) => {
+    if (!el || !el.isConnected || !isRealTextElement(el)) return null;
 
-    if (!force && processedElements.has(el)) return;
+    const trimmedText = (el.textContent || '').trim();
+    if (trimmedText.length < 2) return { action: null, wrap: false };
 
-    if (!isRealTextElement(el)) return;
+    const action = decideAction(analyzeText(trimmedText));
+    return { action, wrap: action === 'persian' };
+  };
 
+  // Write-only phase: mutate the DOM using a previously computed plan.
+  const commitDirection = (el, plan) => {
     try {
-      const text = el.textContent || '';
-      const trimmedText = text.trim();
-
-      if (trimmedText.length < 2) {
-        processedElements.add(el);
-        el.dataset.rtlProcessed = '1';
-        return;
-      }
-
       el.classList.remove('rtl-assistant-persian', 'rtl-assistant-english');
+      unwrapWrappedSpans(el);
 
-      el.querySelectorAll('.rtl-assistant-ltr-number, .rtl-assistant-ltr-symbol, .rtl-assistant-prefix-symbol').forEach(span => {
-        const parent = span.parentNode;
-        if (parent) {
-          parent.replaceChild(document.createTextNode(span.textContent), span);
-        }
-      });
-
-      if (!RTL_ENABLED) {
-        processedElements.add(el);
-        el.dataset.rtlProcessed = '1';
-        return;
-      }
-
-      const stats = analyzeText(trimmedText);
-      if (!stats) {
-        processedElements.add(el);
-        el.dataset.rtlProcessed = '1';
-        return;
-      }
-
-      if (
-        stats.hasRTL &&
-        (stats.rtlRatio > 0.2 || stats.wordCount < 5)
-      ) {
-        el.classList.add('rtl-assistant-persian');
-        processNumbersAndSymbolsSafely(el);
-      }
-      else if (stats.hasEnglish && !stats.hasRTL) {
-        if (stats.wordCount <= 3 && stats.totalChars < 20) {
-          el.classList.add('rtl-assistant-persian');
-          processNumbersAndSymbolsSafely(el);
-        } else {
-          el.classList.add('rtl-assistant-english');
-        }
-      }
-      else if (stats.hasRTL && stats.rtlRatio <= 0.2) {
-        el.classList.add('rtl-assistant-english');
+      if (RTL_ENABLED && plan.action) {
+        el.classList.add('rtl-assistant-' + plan.action);
+        if (plan.wrap) processNumbersAndSymbolsSafely(el);
       }
 
       processedElements.add(el);
       el.dataset.rtlProcessed = '1';
-
     } catch (error) {
       DEBUG && console.warn('Error applying direction:', error);
       processedElements.add(el);
       el.dataset.rtlProcessed = '1';
     }
+  };
+
+  const applyDirectionSafely = (el, force = false) => {
+    if (!el || !el.isConnected) return;
+    if (!force && processedElements.has(el)) return;
+    const plan = planDirection(el);
+    if (plan) commitDirection(el, plan);
   };
 
   /* =========================
@@ -450,29 +475,39 @@
     if (!RTL_ENABLED && !force) return;
 
     try {
-      const prioritySelectors = [
-        '.message, .chat-message, [class*="message-"], [class*="chat-"]',
-        '.prose, .markdown, [class*="content"], [class*="text"]',
-        'p, h1, h2, h3, h4, h5, h6, li, blockquote'
-      ];
-
       let elements = [];
-      prioritySelectors.forEach(selector => {
-        const found = document.querySelectorAll(selector);
-        elements = elements.concat(Array.from(found));
+      PRIORITY_SELECTORS.forEach(selector => {
+        elements = elements.concat(Array.from(document.querySelectorAll(selector)));
       });
 
-      const uniqueElements = [...new Set(elements)];
+      const candidates = [...new Set(elements)].slice(-500);
 
-      const recentElements = uniqueElements.slice(-500);
-      recentElements.forEach(el => applyDirectionSafely(el, force));
+      // Nested selectors (e.g. .message and its <p>) would make the parent
+      // unwrap spans the child just wrapped. Keep only leaf-most candidates:
+      // mark every ancestor of a candidate, then drop marked candidates.
+      const ancestorsOfCandidates = new Set();
+      candidates.forEach(el => {
+        let ancestor = el.parentElement;
+        while (ancestor) {
+          ancestorsOfCandidates.add(ancestor);
+          ancestor = ancestor.parentElement;
+        }
+      });
+      const leaves = candidates.filter(el => !ancestorsOfCandidates.has(el));
+
+      // Phase 1: all style/layout reads. Phase 2: all DOM writes. Keeping
+      // them apart avoids forced synchronous reflow on every element.
+      const plans = leaves.map(el => [
+        el,
+        (force || !processedElements.has(el)) ? planDirection(el) : null,
+      ]);
+
+      plans.forEach(([el, plan]) => {
+        if (plan) commitDirection(el, plan);
+      });
 
       document.querySelectorAll('textarea').forEach(ta => {
-        if (RTL_ENABLED) {
-          ta.classList.add('rtl-assistant-textarea');
-        } else {
-          ta.classList.remove('rtl-assistant-textarea');
-        }
+        ta.classList.toggle('rtl-assistant-textarea', RTL_ENABLED);
       });
 
     } catch (error) {
@@ -489,6 +524,8 @@
       const mainContent = document.querySelector('main, .chat-container, [role="main"]') || document.body;
 
       const observer = new MutationObserver((mutations) => {
+        if (!RTL_ENABLED) return;
+
         let hasRelevantChanges = false;
 
         for (const mutation of mutations) {
@@ -548,64 +585,13 @@
       btn.className = RTL_ENABLED ? 'rtl-on' : 'rtl-off';
       btn.textContent = RTL_ENABLED ? 'RTL ON' : 'RTL OFF';
 
+      // One cleanup pass restores text and clears all markers in both
+      // directions. ON re-scans afterwards; OFF stops here.
+      stripMarks();
+      processedElements = new WeakSet();
+
       if (RTL_ENABLED) {
-        processedElements = new WeakSet();
-
-        document.querySelectorAll('.rtl-assistant-persian, .rtl-assistant-english').forEach(el => {
-          el.classList.remove('rtl-assistant-persian', 'rtl-assistant-english');
-        });
-
-        document.querySelectorAll('.rtl-assistant-ltr-number, .rtl-assistant-ltr-symbol, .rtl-assistant-prefix-symbol').forEach(span => {
-          const parent = span.parentNode;
-          if (parent) {
-            parent.replaceChild(document.createTextNode(span.textContent), span);
-          }
-        });
-
-        document.querySelectorAll('textarea').forEach(ta => {
-          ta.classList.add('rtl-assistant-textarea');
-        });
-
-        setTimeout(() => {
-          scanImportantElements(true);
-        }, 100);
-
-      } else {
-        // Properly remove all classes
-        document.querySelectorAll('[class*="rtl-assistant-"]').forEach(el => {
-          el.classList.remove(
-            'rtl-assistant-persian',
-            'rtl-assistant-english',
-            'rtl-assistant-ltr-number',
-            'rtl-assistant-ltr-symbol',
-            'rtl-assistant-prefix-symbol',
-            'rtl-assistant-textarea'
-          );
-
-          delete el.dataset.rtlProcessed;
-          delete el.dataset.rtlNumbers;
-        });
-
-        // Restore all wrapped spans to plain text
-        document.querySelectorAll('.rtl-assistant-ltr-number, .rtl-assistant-ltr-symbol, .rtl-assistant-prefix-symbol').forEach(span => {
-          const parent = span.parentNode;
-          if (parent) {
-            parent.replaceChild(document.createTextNode(span.textContent), span);
-          }
-        });
-
-        document.querySelectorAll('textarea').forEach(ta => {
-          ta.classList.remove('rtl-assistant-textarea');
-        });
-
-        processedElements = new WeakSet();
-
-        setTimeout(() => {
-          document.querySelectorAll('*').forEach(el => {
-            delete el.dataset.rtlProcessed;
-            delete el.dataset.rtlNumbers;
-          });
-        }, 50);
+        setTimeout(() => scanImportantElements(true), 100);
       }
     };
 
