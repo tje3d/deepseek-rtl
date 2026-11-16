@@ -33,9 +33,6 @@
   const DEBUG = false;
   const log = (...args) => DEBUG && console.log(...args);
 
-  // Unified font stack that works well for both Persian and English
-  const UNIFIED_FONT = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Segoe UI", "Segoe UI Arabic", "Noto Sans Arabic", Tahoma, sans-serif';
-
   // Selector for elements that must always stay LTR (code blocks, inline code, syntax highlighting)
   const CODE_BLOCK_SELECTOR =
     'pre, code, .code-block, [class*="md-code"], [class*="code-block"], [class*="language-"]';
@@ -54,7 +51,6 @@
       .rtl-assistant-persian {
         direction: rtl !important;
         text-align: right;
-        font-family: ${UNIFIED_FONT};
         font-weight: normal;
         unicode-bidi: plaintext !important;
       }
@@ -63,7 +59,6 @@
         direction: ltr !important;
         text-align: left;
         unicode-bidi: isolate !important;
-        font-family: ${UNIFIED_FONT};
         font-weight: normal;
       }
 
@@ -71,7 +66,6 @@
         direction: ltr !important;
         unicode-bidi: embed !important;
         display: inline-block;
-        font-family: ${UNIFIED_FONT};
       }
 
       .rtl-assistant-ltr-symbol {
@@ -80,7 +74,6 @@
         display: inline-block;
         margin-left: 2px;
         margin-right: 2px;
-        font-family: ${UNIFIED_FONT};
       }
 
       .rtl-assistant-prefix-symbol {
@@ -88,13 +81,11 @@
         unicode-bidi: embed !important;
         display: inline-block;
         margin-left: 2px;
-        font-family: ${UNIFIED_FONT};
       }
 
       .rtl-assistant-textarea {
         direction: rtl !important;
         text-align: right;
-        font-family: ${UNIFIED_FONT};
       }
 
       /* === RTL FIX: code blocks must always stay LTR === */
@@ -125,9 +116,7 @@
         border-radius: 6px;
         border: none;
         cursor: pointer;
-        font-size: 13px;
         font-weight: bold;
-        font-family: system-ui, sans-serif;
         box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         transition: all 0.3s ease;
       }
